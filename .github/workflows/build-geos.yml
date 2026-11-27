@@ -19,7 +19,7 @@ jobs:
           export DEBIAN_FRONTEND=noninteractive
           apt-get update
           apt-get install -y --no-install-recommends \
-            ca-certificates build-essential devscripts dpkg-dev debhelper dh-php \
+            ca-certificates curl build-essential devscripts dpkg-dev debhelper dh-php \
             libgeos-dev php8.2-cli php8.2-dev phpunit
           php8.2 -v
           php-config8.2 --extension-dir
