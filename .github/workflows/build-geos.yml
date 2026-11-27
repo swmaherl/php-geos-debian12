@@ -1,4 +1,4 @@
-name: Build PHP-GEOS for Debian 12 / PHP 8.2
+name: Build Debian 12 PHP 8.2 GEOS backport
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ jobs:
     container:
       image: debian:bookworm
     steps:
-      - name: Install build dependencies in disposable Debian 12 container
+      - name: Install build tools in disposable Debian 12 container
         shell: bash
         run: |
           set -euo pipefail
@@ -24,7 +24,7 @@ jobs:
           php8.2 -v
           php-config8.2 --extension-dir
 
-      - name: Download official Debian 1.0.0-8 source and build for Bookworm
+      - name: Download official Debian GEOS source and create versioned Bookworm backport
         shell: bash
         run: |
           set -euo pipefail
@@ -32,50 +32,39 @@ jobs:
           cd /tmp/geos-build
           dget -u https://deb.debian.org/debian/pool/main/p/php-geos/php-geos_1.0.0-8.dsc
           cd php-geos-1.0.0
+          export DEBEMAIL='build@example.invalid' DEBFULLNAME='Local Debian Backport'
+          dch --newversion '1.0.0-8~bpo12+1' --distribution bookworm --force-distribution \
+            'Rebuild official Debian GEOS 1.0.0-8 for Debian 12 and PHP 8.2.'
+          head -n 10 debian/changelog
           dpkg-buildpackage -us -uc -b
-          # Create a standalone package. Never replace the existing php-geos package:
-          # it owns the PHP 7.4 configuration on the production server.
           mkdir -p "$GITHUB_WORKSPACE/output"
-          pkgroot=/tmp/mjh-geos-package
-          mkdir -p "$pkgroot/DEBIAN" "$pkgroot/opt/mjh/php-geos-8.2"
-          install -m 0644 modules/geos.so "$pkgroot/opt/mjh/php-geos-8.2/geos.so"
-          cat > "$pkgroot/DEBIAN/control" <<'CONTROL'
-          Package: mjh-php82-geos
-          Version: 1.0.0-8+bookworm1
-          Section: php
-          Priority: optional
-          Architecture: amd64
-          Maintainer: Local Build <noreply@example.invalid>
-          Depends: phpapi-20220829, libgeos-c1v5 (>= 3.6.0)
-          Description: Isolated PHP 8.2 GEOS extension for Debian 12
-           Separate installation under /opt/mjh/php-geos-8.2.
-           Does not replace php-geos, change PHP configuration or run maintainer scripts.
-          CONTROL
-          dpkg-deb -b "$pkgroot" "$GITHUB_WORKSPACE/output/mjh-php82-geos_1.0.0-8+bookworm1_amd64.deb"
+          cp ../php-geos_1.0.0-8~bpo12+1_amd64.deb "$GITHUB_WORKSPACE/output/"
           dpkg-deb -I "$GITHUB_WORKSPACE"/output/*.deb
           dpkg-deb -c "$GITHUB_WORKSPACE"/output/*.deb
-          test "$(find "$pkgroot" -type f | wc -l)" -eq 2
-          test ! -e "$pkgroot/DEBIAN/postinst"
-          test ! -e "$pkgroot/DEBIAN/prerm"
-      - name: Test coexistence with Debian php-geos and smoke test the isolated module
+          dpkg --compare-versions '1.0.0-7+b1' lt '1.0.0-8~bpo12+1'
+          dpkg --compare-versions '1.0.0-8~bpo12+1' lt '1.0.0-8'
+          # Standard Debian package, not the earlier /opt/MJH sidecar.
+          test "$(dpkg-deb -f "$GITHUB_WORKSPACE"/output/*.deb Package)" = php-geos
+          dpkg-deb -c "$GITHUB_WORKSPACE"/output/*.deb | grep 'usr/lib/php/20220829/geos.so'
+
+      - name: Test ordinary Debian package upgrade and PHP 8.2 GEOS
         shell: bash
         run: |
           set -euo pipefail
           export DEBIAN_FRONTEND=noninteractive
           apt-get install -y --no-install-recommends php-geos
-          test -f /etc/php/8.2/mods-available/geos.ini
-          oldsum=$(sha256sum /usr/lib/php/20220829/geos.so | cut -d' ' -f1)
-          dpkg -i "$GITHUB_WORKSPACE"/output/*.deb
-          test "$(sha256sum /usr/lib/php/20220829/geos.so | cut -d' ' -f1)" = "$oldsum"
           dpkg-query -W -f='${Version}' php-geos | grep '^1.0.0-7'
-          php8.2 -n -d extension=/opt/mjh/php-geos-8.2/geos.so -r 'if (!extension_loaded("geos") || !class_exists("GEOSGeometry")) exit(1); $r=new GEOSWKTReader(); $g=$r->read("POINT (7 49)"); if (!$g instanceof GEOSGeometry) exit(1); echo "Isolated PHP 8.2 GEOS and WKT reader OK",PHP_EOL;'
-          test ! -e /etc/php/8.2/mods-available/mjh-geos.ini
-          echo "Existing Debian php-geos package remains installed and unchanged."
+          dpkg -i "$GITHUB_WORKSPACE"/output/*.deb
+          dpkg-query -W -f='${Version}' php-geos | grep -Fx '1.0.0-8~bpo12+1'
+          php8.2 -n -d extension=geos.so -r 'if (!extension_loaded("geos") || !class_exists("GEOSGeometry")) exit(1); $r = new GEOSWKTReader(); $g = $r->read("POINT (7 49)"); if (!$g instanceof GEOSGeometry) exit(1); echo "GEOS PHP 8.2 WKT OK",PHP_EOL;'
+          php8.2 -m | grep -x geos
+          dpkg --audit
+          echo 'Ordinary Debian php-geos upgrade and PHP 8.2 tests completed.'
 
-      - name: Upload Debian package
+      - name: Upload versioned Debian 12 backport package
         uses: actions/upload-artifact@v4
         with:
-          name: mjh-php82-geos-isolated
+          name: php-geos-bookworm-backport
           path: output/*.deb
           if-no-files-found: error
           retention-days: 14
