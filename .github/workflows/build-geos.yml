@@ -33,7 +33,7 @@ jobs:
           dget -u https://deb.debian.org/debian/pool/main/p/php-geos/php-geos_1.0.0-8.dsc
           cd php-geos-1.0.0
           export DEBEMAIL='build@example.invalid' DEBFULLNAME='Local Debian Backport'
-          dch --newversion '1.0.0-8~bpo12+1' --distribution bookworm --force-distribution \
+          dch --force-bad-version --newversion '1.0.0-8~bpo12+1' --distribution bookworm --force-distribution \
             'Rebuild official Debian GEOS 1.0.0-8 for Debian 12 and PHP 8.2.'
           head -n 10 debian/changelog
           dpkg-buildpackage -us -uc -b
