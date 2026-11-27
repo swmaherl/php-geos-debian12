@@ -1,23 +1,35 @@
-# Isoliertes PHP-GEOS für Debian 12 / PHP 8.2
+# PHP-GEOS: regulärer Debian-12-Backport für PHP 8.2
 
-Der Workflow kompiliert den offiziellen Debian-Quellcode `php-geos 1.0.0-8` (einschließlich des PHP-8.2-`__toString`-Patches) in einem temporären Debian-12-Container.
+## Ziel
 
-## Warum ein separates Paket?
+PHP-GEOS unter Debian 12 und PHP 8.2 **aktiv** betreiben, ohne eine Erweiterung unter `/opt/` oder einen dauerhaft parallelen Paketnamen einzuführen.
 
-Auf Hyperion ist `php-geos 1.0.0-7+b1` installiert. Dieses alte Paket **besitzt die unter PHP 7.4 aktive Konfiguration** `/etc/php/7.4/mods-available/geos.ini`. Ein gewöhnliches Upgrade von `php-geos` kann daher die laufende 7.4-Konfiguration verändern.
+Der GitHub-Workflow kompiliert das offizielle Debian-Quellpaket `php-geos 1.0.0-8` mit dem PHP-8.2-`__toString`-Fix auf Debian 12 und erstellt das reguläre Paket `php-geos_1.0.0-8~bpo12+1_amd64.deb`.
 
-Das zusätzliche Paket heißt deshalb `mjh-php82-geos` und enthält **nur** `/opt/mjh/php-geos-8.2/geos.so`. Es installiert **keine** PHP-INI, hat **keine** Maintainer-Skripte und ersetzt weder `php-geos` noch PHP-7.4-Dateien. Die Aktivierung unter PHP 8.2 erfolgt später bewusst separat.
+Die Versionsnummer ist wichtiger Teil der Strategie: neuer als das bestehende Bookworm-Paket `1.0.0-7+b1`, aber älter als Debians offizielle `1.0.0-8` unter Debian 13. Das ermöglicht den normalen Upgrade-Pfad.
 
-## Build starten
+## Workflow
 
-**Actions** → **Build PHP-GEOS for Debian 12 / PHP 8.2** → **Run workflow** (`main`).
+1. **Actions** → **Build Debian 12 PHP 8.2 GEOS backport** → **Run workflow** (`main`).
+2. Container installiert die Build-Werkzeuge nur auf GitHub.
+3. Offizielle Debian-Quellen und Patches werden eingebunden.
+4. Die Paketversion wird im Debian-Changelog auf `1.0.0-8~bpo12+1` gesetzt.
+5. Eine frische Debian-12-Containerinstanz installiert das alte `php-geos`, führt das Upgrade aus und testet den neuen PHP-8.2-GEOS-WKT-Reader.
+6. Das fertige .deb ist als Artifact `php-geos-bookworm-backport` abrufbar.
 
-Das Artifact heißt `mjh-php82-geos-isolated`; die enthaltene Datei `mjh-php82-geos_1.0.0-8+bookworm1_amd64.deb`.
+## Produktionsmigration mit Rückweg
 
-Der GitHub-Test installiert zuerst Debians altes `php-geos`, anschließend das separate Paket. Er prüft, dass die alte Binärdatei unverändert bleibt, und lädt die neue Erweiterung explizit mit PHP 8.2.
+**Nicht direkt auf Hyperion installieren!** Laut Serverkontrolle besitzt das vorhandene `php-geos 1.0.0-7+b1` die aktivierte Datei `/etc/php/7.4/mods-available/geos.ini`. Diese alte Konfiguration muss bis zum finalen Wechsel unverändert bleiben.
 
-## Grenzen der Tests
+Geplante Reihenfolge:
+- Alte PHP-7.4- und Apache-Konfiguration sowie aktuelle GEOS-Dateien sichern; produktive Dienste nicht verändern.
+- Neues 8.2-Modul zunächst unabhängig vom Paket-Upgrade mit `php8.2 -n -d extension=/PFAD/geos.so ...` testen, danach parallel Backdrop-/Geofield-Tests auf geeigneter Testumgebung.
+- Erst beim geplanten Wechsel auf 8.2 und nach festgelegtem Rückweg das Debian-Backport-Paket installieren, `phpenmod -v 8.2 geos` und Apache auf mod_php 8.2 umstellen.
+- Stabilität, Cron, Geocoder, Geofield, Views und Umkreissuche prüfen.
+- Erst danach PHP 7.4 und Sury-Altlasten kontrolliert entfernen. Bei Debian 13 das reguläre Debian-Paket übernehmen.
 
-Ein ursprünglicher Debian-PHPT-Geometrietest (`Geometry_buffer`) weicht bei Polygonkoordinaten ab. Debians Quellpaket ignoriert diesen Testfehler beim Paketbau. Der neue Lade- und WKT-Test ist ein Smoke-Test, keine vollständige Backdrop-/Geometrie-Freigabe.
+## Bekannter Testpunkt
 
-**Noch nicht auf Hyperion installieren oder aktivieren**, bis das neue Artifact geprüft und ein gesicherter Rückweg besprochen wurde. Das ursprüngliche Paket `php-geos_1.0.0-8+bookworm1_amd64.deb` aus dem älteren Workflow soll nicht verwendet werden.
+Der Original-Build zeigt bei `Geometry_buffer` einen Koordinatenunterschied in einem Polygon-Test. Debian ignoriert Fehler der Quelltests bei diesem Paket; der GitHub-Workflow führt zusätzlich Lade-/WKT-Tests durch. Das bedeutet **nicht**, dass alle Geometrieoperationen freigegeben sind.
+
+Dieser Build ist ein eigens gepflegter Backport. Er wird mit APT/dpkg verwaltet, aber bis zum späteren Wechsel auf ein offizielles Debian-Paket muss GEOS selbst auf Sicherheits- und Kompatibilitätskorrekturen kontrolliert werden. Reguläre Debian/PHP-Updates bleiben unberührt.
