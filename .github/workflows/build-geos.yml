@@ -33,10 +33,27 @@ jobs:
           dget -u https://deb.debian.org/debian/pool/main/p/php-geos/php-geos_1.0.0-8.dsc
           cd php-geos-1.0.0
           dpkg-buildpackage -us -uc -b
+          # Repackage for PHP 8.2 only: Debian's generic module commands
+          # may otherwise touch other installed PHP versions.
           mkdir -p "$GITHUB_WORKSPACE/output"
-          cp ../php-geos_*_amd64.deb "$GITHUB_WORKSPACE/output/"
+          pkgroot=/tmp/php-geos-safe
+          dpkg-deb -R ../php-geos_1.0.0-8_amd64.deb "$pkgroot"
+          sed -i 's/phpenmod "\$name"/phpenmod -v 8.2 "\$name"/g; s/phpenmod geos/phpenmod -v 8.2 geos/g' "$pkgroot/DEBIAN/postinst"
+          sed -i 's/phpdismod geos/phpdismod -v 8.2 geos/g' "$pkgroot/DEBIAN/prerm"
+          sed -i 's/^Version: 1.0.0-8$/Version: 1.0.0-8+bookworm1/' "$pkgroot/DEBIAN/control"
+          # Refuse to release a package with unscoped enable/disable commands.
+          if grep -E '^[[:space:]]*(phpenmod|phpdismod)[[:space:]]+(-v[[:space:]]+8[.]2)?' "$pkgroot"/DEBIAN/{postinst,prerm} | grep -vE 'php(en|dis)mod -v 8[.]2 '; then
+            echo "Unscoped module command in maintainer scripts"
+            exit 1
+          fi
+          dpkg-deb -b "$pkgroot" "$GITHUB_WORKSPACE/output/php-geos_1.0.0-8+bookworm1_amd64.deb"
           dpkg-deb -I "$GITHUB_WORKSPACE"/output/*.deb
           dpkg-deb -c "$GITHUB_WORKSPACE"/output/*.deb | grep 'geos.so'
+          # Verify payload has no 7.4 files.
+          if dpkg-deb -c "$GITHUB_WORKSPACE"/output/*.deb | grep -E '/etc/php/7[.]4/|/usr/lib/php/20190902/'; then
+            echo "PHP 7.4 payload detected"
+            exit 1
+          fi
 
       - name: Install and smoke test generated package inside container
         shell: bash
@@ -45,6 +62,7 @@ jobs:
           dpkg -i "$GITHUB_WORKSPACE"/output/*.deb
           php8.2 -n -d extension=geos.so -r 'if (!extension_loaded("geos") || !class_exists("GEOSGeometry")) { exit(1); } echo "GEOS loaded successfully on PHP ", PHP_VERSION, PHP_EOL;'
           php8.2 -n -d extension=geos.so -m | grep -x geos
+          php8.2 -n -d extension=geos.so -r '$r=new GEOSWKTReader(); $g=$r->read("POINT (7 49)"); if (!$g || !($g instanceof GEOSGeometry)) exit(1); echo "WKT reader OK\\n";'
 
       - name: Upload Debian package
         uses: actions/upload-artifact@v4
